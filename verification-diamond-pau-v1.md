@@ -9,9 +9,10 @@ Block: `25273612`
 | Item | Count |
 |---|---:|
 | Registry addresses checked | 28 |
-| Exact runtime bytecode matches | 28 |
-| Forge creation full matches | 28 |
-| Forge runtime full matches | 28 |
+| Exact runtime bytecode matches | 29 |
+| Forge creation full matches | 29 |
+| Forge runtime full matches | 29 |
+| PAU assembler checked | 1 |
 | `PAU_FACTORY.beacon()` matches registry `BEACON` | 1 |
 | Beacon integrations matched | 25 / 25 |
 | Beacon selector dispatches matched | 223 / 223 |
@@ -23,7 +24,7 @@ Block: `25273612`
 | Beacon admin identity | Sky `MCD_PAUSE_PROXY` |
 | `PAU_FACTORY` access model | permissionless |
 | Registry Solidity constants diffed against verified address set | 28 / 28 |
-| Registry address checksums (EIP-55) valid | 28 / 28 |
+| Registry and supplemental address checksums (EIP-55) valid | 29 / 29 |
 | Registry facets vs deploy-script facets | 25 / 25 (exact, none omitted/extra) |
 | Wiring reference source | clean `diamond-pau@v1.13.0` checkout |
 | Administered-agent factory live fork checks | 2 / 2 |
@@ -38,6 +39,7 @@ Block: `25273612`
 |---|---|---|
 | Diamond core and facets | [sky-ecosystem/diamond-pau v1.13.0](https://github.com/sky-ecosystem/diamond-pau/releases/tag/v1.13.0) | `5c5ad6ae174bf467081ca82342ced2bd42a5c732` |
 | Administered-agent factory | [sky-ecosystem/pau-administered-agent v1.0.0](https://github.com/sky-ecosystem/pau-administered-agent/releases/tag/v1.0.0) | `bfaaf709a8664d74d12604455f0365a0a12439cf` |
+| PAU assembler | [sky-ecosystem/pau-assemblers v1.0.0](https://github.com/sky-ecosystem/pau-assemblers/releases/tag/v1.0.0) | `d7d6f084604d4f7e45879a3b15d03ee870231467` |
 
 ## Method
 
@@ -46,15 +48,16 @@ Block: `25273612`
 | Registry constants | `sky-pau-registry/src/Ethereum.sol` is diffed against the 28 verified addresses and each address is checked for EIP-55 casing |
 | Diamond core and facets | [sky-ecosystem/diamond-pau v1.13.0](https://github.com/sky-ecosystem/diamond-pau/releases/tag/v1.13.0), mainnet constructor args, `eth_getCode`, `forge verify-bytecode` |
 | Administered-agent factory | [sky-ecosystem/pau-administered-agent v1.0.0](https://github.com/sky-ecosystem/pau-administered-agent/releases/tag/v1.0.0), Etherscan source, `forge verify-bytecode`, runtime hash, live fork deploy/admin behavior |
+| PAU assembler | [sky-ecosystem/pau-assemblers v1.0.0](https://github.com/sky-ecosystem/pau-assemblers/releases/tag/v1.0.0), deployed metadata source, constructor args, `VERSION()`, factory immutable getters, `forge verify-bytecode` |
 | Wiring | `PAU_FACTORY.beacon()`, Beacon admin role, Beacon integrations, Beacon selector dispatches, facet dependency getters, reference rebuilt in a clean temp root from `diamond-pau@v1.13.0` |
 | External dependencies | Mainnet code, Etherscan source/proxy metadata, token metadata, identity getters |
-| Blocks | `25270766`, `25273612` |
+| Blocks | `latest`, `25273612` |
 
 ## One-Stop Verification
 
-Prerequisites: `git`, `bash`, `forge`, `cast`, Ethereum mainnet RPC.
+Prerequisites: `git`, `bash`, `curl`, `jq`, `forge`, `cast`, `ETHERSCAN_API_KEY`, Ethereum mainnet RPC.
 
-Copy the full block, replace `MAINNET_RPC_URL`, and run it from any directory. The block writes the verifier scripts into `VERIFY_DIR`, clones the pinned GitHub sources, and runs the checks.
+Run `MAINNET_RPC_URL=<mainnet-rpc> ./test.sh` from this directory. `test.sh` extracts and runs the bash block below, which writes the verifier scripts into `VERIFY_DIR`, clones the pinned GitHub sources, and runs the checks.
 
 ```bash
 set -euo pipefail
@@ -86,6 +89,7 @@ Checks:
   - every expected constant equals the verified address
   - each address is EIP-55 checksummed
   - there are no extra address constants in the registry file
+  - the supplemental PAU_ASSEMBLER address is EIP-55 checksummed
 USAGE
 }
 
@@ -114,7 +118,6 @@ check_constant() {
     local name="$1"
     local expected="$2"
     local actual
-    local checksum
 
     expected_count=$((expected_count + 1))
 
@@ -133,6 +136,14 @@ check_constant() {
         echo "  actual:   $actual" >&2
         return 1
     fi
+
+    check_address "$name" "$actual"
+}
+
+check_address() {
+    local name="$1"
+    local actual="$2"
+    local checksum
 
     checksum="$(cast to-check-sum-address "$actual")"
     if [[ "$checksum" != "$actual" ]]; then
@@ -175,6 +186,8 @@ check_constant WEETH_FACET          0x1d8D089EB7D558F5dc6aA0cf98DDe13B77b3F641
 check_constant WRAP_PROXY_ETH_FACET 0x081506DE21C695Af5e61a81aD288C8A96B6b59B9
 check_constant WSTETH_FACET         0x3a82D11Cd37Fb0098363262Dc69425d07Fa05516
 
+check_address PAU_ASSEMBLER 0xc812aAD3FaE2D3511C664374B601a9BeBFeCCa2E
+
 actual_count="$(
     sed -nE 's/.*address[[:space:]]+[^;]*constant[[:space:]]+[A-Z0-9_]+[[:space:]]*=[[:space:]]*0x[0-9a-fA-F]{40};.*/x/p' "$REGISTRY_FILE" |
         wc -l |
@@ -189,7 +202,7 @@ if [[ "$actual_count" != "$expected_count" ]]; then
 fi
 
 echo
-echo "PASS: $expected_count Sky PAU registry constants match verified addresses"
+echo "PASS: $expected_count Sky PAU registry constants and PAU_ASSEMBLER match verified addresses"
 SKY_PAU_CONSTANTS_SH
 
 cat > "$VERIFY_DIR/verification_scripts/verify-sky-pau-registry-bytecode.sh" <<'SKY_PAU_BYTECODE_SH'
@@ -206,23 +219,31 @@ Default:
 
 Optional env:
   ETH_RPC_URL                 fallback RPC env var if MAINNET_RPC_URL is unset
-  VERIFY_BLOCK                block for historical bytecode, default 25270766
+  ETHERSCAN_API_KEY           Etherscan key for creation-code lookup
+  MAINNET_API_KEY             fallback explorer key if ETHERSCAN_API_KEY is unset
+  VERIFY_BLOCK                block for bytecode, default latest
+  PAU_ASSEMBLER_VERIFY_BLOCK  block for PAU_ASSEMBLER bytecode, default VERIFY_BLOCK
   VERIFY_ONLY                 comma-separated registry constants, for example: BEACON,PAU_FACTORY,AAVE_FACET
   DIAMOND_PAU_REPO            default https://github.com/sky-ecosystem/diamond-pau.git
+  PAU_ASSEMBLERS_REPO         default https://github.com/sky-ecosystem/pau-assemblers.git
   VERIFY_DIR                  working root, default: mktemp
   DIAMOND_PAU_RELEASE_DIR     checkout dir, default $VERIFY_DIR/diamond-pau-v1.13.0
   DIAMOND_PAU_WORKDIR         parent build dir, default $VERIFY_DIR/diamond-pau-parent-v1.13.0
   REGISTRY_FILE               default ../sky-pau-registry/src/Ethereum.sol
   SKIP_REGISTRY_CONSTANTS=1   skip registry constants diff
   SKIP_AA=1                   skip ADMINISTERED_AGENT_FACTORY
+  SKIP_ASSEMBLER=1            skip PAU_ASSEMBLER
   AA_WORKDIR                  temp parent build dir, default $VERIFY_DIR/pau-aa-parent
   AA_RELEASE_DIR              pau-administered-agent checkout, default $VERIFY_DIR/pau-administered-agent-v1.0.0
+  PAU_ASSEMBLERS_WORKDIR      temp build dir, default $VERIFY_DIR/pau-assemblers-bytecode-v1.0.0
+  PAU_ASSEMBLERS_RELEASE_DIR  pau-assemblers checkout, default $VERIFY_DIR/pau-assemblers-v1.0.0
 
 This verifies:
   - BEACON
   - PAU_FACTORY
   - 25 PAU facets
   - ADMINISTERED_AGENT_FACTORY, unless SKIP_AA=1
+  - PAU_ASSEMBLER, unless SKIP_ASSEMBLER=1
 
 The script requires both:
   Creation code matched with status full
@@ -239,13 +260,17 @@ TAG="${1:-v1.13.0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RPC_URL="${MAINNET_RPC_URL:-${ETH_RPC_URL:-}}"
-VERIFY_BLOCK="${VERIFY_BLOCK:-25270766}"
+EXPLORER_API_KEY="${ETHERSCAN_API_KEY:-${MAINNET_API_KEY:-}}"
+VERIFY_BLOCK="${VERIFY_BLOCK:-latest}"
+PAU_ASSEMBLER_VERIFY_BLOCK="${PAU_ASSEMBLER_VERIFY_BLOCK:-$VERIFY_BLOCK}"
 VERIFY_DIR="${VERIFY_DIR:-$(mktemp -d)}"
 VERIFY_ONLY="${VERIFY_ONLY:-}"
 SKIP_AA="${SKIP_AA:-0}"
+SKIP_ASSEMBLER="${SKIP_ASSEMBLER:-0}"
 SKIP_REGISTRY_CONSTANTS="${SKIP_REGISTRY_CONSTANTS:-0}"
 REGISTRY_FILE="${REGISTRY_FILE:-$REPO_ROOT/../sky-pau-registry/src/Ethereum.sol}"
 DIAMOND_PAU_REPO="${DIAMOND_PAU_REPO:-https://github.com/sky-ecosystem/diamond-pau.git}"
+PAU_ASSEMBLERS_REPO="${PAU_ASSEMBLERS_REPO:-https://github.com/sky-ecosystem/pau-assemblers.git}"
 
 if [[ -z "$RPC_URL" ]]; then
     echo "ERROR: set MAINNET_RPC_URL or ETH_RPC_URL" >&2
@@ -257,10 +282,25 @@ if [[ "$RPC_URL" == "<mainnet-rpc>" ]]; then
     exit 2
 fi
 
+if [[ -n "$EXPLORER_API_KEY" ]]; then
+    export ETHERSCAN_API_KEY="$EXPLORER_API_KEY"
+fi
+export MAINNET_API_KEY="${MAINNET_API_KEY:-${ETHERSCAN_API_KEY:-dummy}}"
+export BASESCAN_API_KEY="${BASESCAN_API_KEY:-dummy}"
+export ARBISCAN_API_KEY="${ARBISCAN_API_KEY:-dummy}"
+export SNOWTRACE_API_KEY="${SNOWTRACE_API_KEY:-dummy}"
+
 if ! command -v forge >/dev/null 2>&1; then
     echo "ERROR: forge is required" >&2
     exit 2
 fi
+
+for cmd in cast curl jq; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "ERROR: $cmd is required" >&2
+        exit 2
+    fi
+done
 
 should_run() {
     local name="$1"
@@ -273,6 +313,50 @@ should_run() {
         *",$name,"*) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+should_prepare_diamond_pau() {
+    local name
+
+    if [[ -z "$VERIFY_ONLY" ]]; then
+        return 0
+    fi
+
+    for name in \
+        BEACON \
+        PAU_FACTORY \
+        AAVE_FACET \
+        BASIN_FACET \
+        CCTP_FACET \
+        CENTRIFUGE_FACET \
+        CURVE_FACET \
+        DAIUSDS_FACET \
+        ERC4626_FACET \
+        ERC7540_FACET \
+        ETHENA_FACET \
+        FARM_FACET \
+        LAYER_ZERO_FACET \
+        MAPLE_FACET \
+        MERKL_FACET \
+        OTC_FACET \
+        PENDLE_FACET \
+        PSM_FACET \
+        SPARK_VAULT_FACET \
+        SUPERSTATE_FACET \
+        TRANSFER_ASSET_FACET \
+        UNISWAP_V3_FACET \
+        UNISWAP_V4_FACET \
+        USDS_FACET \
+        WEETH_FACET \
+        WRAP_PROXY_ETH_FACET \
+        WSTETH_FACET
+    do
+        if should_run "$name"; then
+            return 0
+        fi
+    done
+
+    return 1
 }
 
 require_full_match() {
@@ -294,17 +378,154 @@ require_full_match() {
     grep -E "Creation code matched|Runtime code matched" "$output_file"
 }
 
+lc() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+artifact_path_for_contract() {
+    local build_root="$1"
+    local contract="$2"
+    local source
+    local contract_name
+    local sol_file
+
+    if [[ "$contract" == *:* ]]; then
+        source="${contract%%:*}"
+        contract_name="${contract##*:}"
+        sol_file="$(basename "$source")"
+    else
+        contract_name="$contract"
+        sol_file="${contract}.sol"
+    fi
+
+    printf '%s/out/%s/%s.json\n' "$build_root" "$sol_file" "$contract_name"
+}
+
+encode_constructor_args() {
+    local types=""
+    local arg
+
+    if (( $# == 0 )); then
+        printf '0x\n'
+        return 0
+    fi
+
+    for arg in "$@"; do
+        if [[ -n "$types" ]]; then
+            types+=","
+        fi
+        types+="address"
+    done
+
+    cast abi-encode "constructor($types)" "$@"
+}
+
+fetch_creation_bytecode() {
+    local address="$1"
+    local response
+    local status
+    local result
+    local attempt
+
+    if [[ -z "${ETHERSCAN_API_KEY:-}" || "$ETHERSCAN_API_KEY" == "dummy" ]]; then
+        echo "ERROR: set ETHERSCAN_API_KEY for Etherscan creation-bytecode lookup" >&2
+        return 1
+    fi
+
+    for attempt in 1 2 3 4 5; do
+        response="$(
+            curl -fsSL \
+                "https://api.etherscan.io/v2/api?chainid=1&module=contract&action=getcontractcreation&contractaddresses=$address&apikey=$ETHERSCAN_API_KEY"
+        )"
+        status="$(jq -r '.status' <<< "$response")"
+
+        if [[ "$status" == "1" ]]; then
+            jq -r '.result[0].creationBytecode' <<< "$response"
+            return 0
+        fi
+
+        result="$(jq -r '.result // .message // empty' <<< "$response")"
+        if [[ "$result" == *"Max calls per sec"* || "$result" == *"rate limit"* ]]; then
+            sleep 1
+            continue
+        fi
+
+        echo "ERROR: Etherscan creation-bytecode lookup failed for $address: $result" >&2
+        return 1
+    done
+
+    echo "ERROR: Etherscan creation-bytecode lookup rate-limited for $address" >&2
+    return 1
+}
+
+verify_latest_artifact() {
+    local build_root="$1"
+    local name="$2"
+    local address="$3"
+    local contract="$4"
+    local expected_runtime_hash="$5"
+    shift 5
+
+    local artifact
+    local creation
+    local encoded_args
+    local expected_creation
+    local actual_creation
+    local runtime_hash
+
+    artifact="$(artifact_path_for_contract "$build_root" "$contract")"
+    if [[ ! -f "$artifact" ]]; then
+        echo "FAIL: $name artifact not found: $artifact" >&2
+        return 1
+    fi
+
+    creation="$(jq -r '.bytecode.object' "$artifact")"
+    encoded_args="$(encode_constructor_args "$@")"
+    expected_creation="${creation}${encoded_args#0x}"
+    actual_creation="$(fetch_creation_bytecode "$address")"
+
+    if [[ "$(lc "$expected_creation")" != "$(lc "$actual_creation")" ]]; then
+        echo "FAIL: $name creation bytecode mismatch" >&2
+        echo "  expected length: ${#expected_creation}" >&2
+        echo "  actual length:   ${#actual_creation}" >&2
+        return 1
+    fi
+    echo "Creation code matched with status full"
+
+    runtime_hash="$(cast code --rpc-url "$RPC_URL" "$address" | cast keccak)"
+    if [[ "$runtime_hash" != "$expected_runtime_hash" ]]; then
+        echo "FAIL: $name latest runtime hash mismatch" >&2
+        echo "  expected: $expected_runtime_hash" >&2
+        echo "  actual:   $runtime_hash" >&2
+        return 1
+    fi
+    echo "Runtime code matched with status full (latest runtime hash $runtime_hash)"
+
+    sleep 0.4
+}
+
 verify_one() {
     local name="$1"
     local address="$2"
     local contract="$3"
-    shift 3
+    local expected_runtime_hash="$4"
+    shift 4
 
     if ! should_run "$name"; then
         return 0
     fi
 
-    local cmd=(forge verify-bytecode --root "$DIAMOND_PAU_BUILD_ROOT" --rpc-url "$RPC_URL" --block "$VERIFY_BLOCK" "$address" "$contract")
+    if [[ "$VERIFY_BLOCK" == "latest" ]]; then
+        echo "==> $name $address $contract"
+        verify_latest_artifact "$DIAMOND_PAU_BUILD_ROOT" "$name" "$address" "$contract" "$expected_runtime_hash" "$@"
+        return
+    fi
+
+    local cmd=(forge verify-bytecode --root "$DIAMOND_PAU_BUILD_ROOT" --rpc-url "$RPC_URL")
+    if [[ "$VERIFY_BLOCK" != "latest" ]]; then
+        cmd+=(--block "$VERIFY_BLOCK")
+    fi
+    cmd+=("$address" "$contract")
     if (( $# > 0 )); then
         cmd+=(--constructor-args "$@")
     fi
@@ -609,13 +830,24 @@ verify_administered_agent_factory() {
     tmp="$(mktemp "$VERIFY_DIR/pau-aa-bytecode.XXXXXX")"
 
     echo "==> ADMINISTERED_AGENT_FACTORY 0x2968c3b5478cF93B70aB1e24255d4EDBBd27a089 pau-administered-agent/AdministeredAgentFactory.sol:AdministeredAgentFactory"
-    if ! forge verify-bytecode \
-        --root "$workdir" \
-        --rpc-url "$RPC_URL" \
-        --block "$VERIFY_BLOCK" \
-        0x2968c3b5478cF93B70aB1e24255d4EDBBd27a089 \
-        pau-administered-agent/AdministeredAgentFactory.sol:AdministeredAgentFactory >"$tmp" 2>&1
-    then
+    if [[ "$VERIFY_BLOCK" == "latest" ]]; then
+        verify_latest_artifact \
+            "$workdir" \
+            ADMINISTERED_AGENT_FACTORY \
+            0x2968c3b5478cF93B70aB1e24255d4EDBBd27a089 \
+            pau-administered-agent/AdministeredAgentFactory.sol:AdministeredAgentFactory \
+            "$ADMINISTERED_AGENT_FACTORY_RUNTIME_HASH"
+        rm -f "$tmp"
+        return 0
+    fi
+
+    local cmd=(forge verify-bytecode --root "$workdir" --rpc-url "$RPC_URL")
+    if [[ "$VERIFY_BLOCK" != "latest" ]]; then
+        cmd+=(--block "$VERIFY_BLOCK")
+    fi
+    cmd+=(0x2968c3b5478cF93B70aB1e24255d4EDBBd27a089 pau-administered-agent/AdministeredAgentFactory.sol:AdministeredAgentFactory)
+
+    if ! "${cmd[@]}" >"$tmp" 2>&1; then
         cat "$tmp"
         rm -f "$tmp"
         echo "FAIL: ADMINISTERED_AGENT_FACTORY forge verify-bytecode exited nonzero" >&2
@@ -626,9 +858,151 @@ verify_administered_agent_factory() {
     rm -f "$tmp"
 }
 
+write_pau_assembler_foundry_toml() {
+    local target="$1"
+
+    cat > "$target" <<'EOF'
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc_version = '0.8.34'
+optimizer = true
+optimizer_runs = 200
+evm_version = 'cancun'
+auto_detect_remappings = false
+remappings = [
+    'forge-std/=lib/forge-std/src/',
+]
+EOF
+}
+
+prepare_pau_assembler_workdir() {
+    local tag="${PAU_ASSEMBLERS_TAG:-v1.0.0}"
+    local metadata_interface_ref="${PAU_ASSEMBLER_METADATA_INTERFACE_REF:-598522365fcd1c76cb7a3822e2db1443ff83bcf4}"
+    local release_dir="${PAU_ASSEMBLERS_RELEASE_DIR:-$VERIFY_DIR/pau-assemblers-v1.0.0}"
+    local workdir="${PAU_ASSEMBLERS_WORKDIR:-$VERIFY_DIR/pau-assemblers-bytecode-v1.0.0}"
+
+    if [[ ! -d "$release_dir/.git" ]]; then
+        echo "==> cloning pau-assemblers $tag into $release_dir" >&2
+        rm -rf "$release_dir"
+        git clone --quiet "$PAU_ASSEMBLERS_REPO" "$release_dir"
+    fi
+
+    git -C "$release_dir" fetch --quiet --tags
+
+    if ! git -C "$release_dir" rev-parse --verify "${tag}^{commit}" >/dev/null 2>&1; then
+        echo "ERROR: unknown pau-assemblers tag/ref after fetch: $tag" >&2
+        exit 2
+    fi
+
+    if ! git -C "$release_dir" cat-file -e "${metadata_interface_ref}:src/interfaces/IDefaultPAUAssembler.sol" 2>/dev/null; then
+        echo "ERROR: unknown PAU assembler metadata interface ref: $metadata_interface_ref" >&2
+        exit 2
+    fi
+
+    git -C "$release_dir" checkout --quiet "$tag"
+
+    rm -rf "$workdir"
+    mkdir -p "$workdir"
+    cp -R "$release_dir/src" "$workdir/src"
+
+    # The deployed Etherscan standard-json uses the v1.0.0 implementation plus the
+    # pre-doc-fix interface comments from this ref. Comments affect the metadata hash,
+    # so reproducing that interface source is required for a creation "full" match.
+    git -C "$release_dir" show "${metadata_interface_ref}:src/interfaces/IDefaultPAUAssembler.sol" \
+        > "$workdir/src/interfaces/IDefaultPAUAssembler.sol"
+
+    write_pau_assembler_foundry_toml "$workdir/foundry.toml"
+
+    forge build --root "$workdir" src/DefaultPAUAssembler.sol >/dev/null
+
+    printf '%s\n' "$workdir"
+}
+
+verify_pau_assembler() {
+    if ! should_run "PAU_ASSEMBLER"; then
+        return 0
+    fi
+
+    if [[ "$SKIP_ASSEMBLER" == "1" ]]; then
+        echo "SKIP: PAU_ASSEMBLER because SKIP_ASSEMBLER=1"
+        return 0
+    fi
+
+    local workdir
+    workdir="$(prepare_pau_assembler_workdir)"
+
+    local tmp
+    tmp="$(mktemp "$VERIFY_DIR/pau-assembler-bytecode.XXXXXX")"
+
+    echo "==> PAU_ASSEMBLER $PAU_ASSEMBLER DefaultPAUAssembler"
+    if [[ "$PAU_ASSEMBLER_VERIFY_BLOCK" == "latest" ]]; then
+        verify_latest_artifact \
+            "$workdir" \
+            PAU_ASSEMBLER \
+            "$PAU_ASSEMBLER" \
+            DefaultPAUAssembler \
+            "$PAU_ASSEMBLER_RUNTIME_HASH" \
+            "$ADMINISTERED_AGENT_FACTORY" \
+            "$PAU_FACTORY"
+        rm -f "$tmp"
+    else
+        local cmd=(forge verify-bytecode --root "$workdir" --rpc-url "$RPC_URL")
+        cmd+=(--block "$PAU_ASSEMBLER_VERIFY_BLOCK")
+        cmd+=("$PAU_ASSEMBLER" DefaultPAUAssembler --constructor-args "$ADMINISTERED_AGENT_FACTORY" "$PAU_FACTORY")
+
+        if ! "${cmd[@]}" >"$tmp" 2>&1; then
+            cat "$tmp"
+            rm -f "$tmp"
+            echo "FAIL: PAU_ASSEMBLER forge verify-bytecode exited nonzero" >&2
+            return 1
+        fi
+
+        require_full_match "PAU_ASSEMBLER" "$tmp"
+
+        rm -f "$tmp"
+    fi
+
+    local version
+    local actual_administered_agent_factory
+    local actual_pau_factory
+
+    version="$(cast call --rpc-url "$RPC_URL" "$PAU_ASSEMBLER" 'VERSION()(string)')"
+    if [[ "$version" != '"1.0.0"' ]]; then
+        echo "FAIL: PAU_ASSEMBLER VERSION() mismatch" >&2
+        echo "  expected: \"1.0.0\"" >&2
+        echo "  actual:   $version" >&2
+        return 1
+    fi
+    echo "pass: PAU_ASSEMBLER VERSION() = $version"
+
+    actual_administered_agent_factory="$(cast call --rpc-url "$RPC_URL" "$PAU_ASSEMBLER" 'administeredAgentFactory()(address)')"
+    if [[ "$(printf '%s' "$actual_administered_agent_factory" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$ADMINISTERED_AGENT_FACTORY" | tr '[:upper:]' '[:lower:]')" ]]; then
+        echo "FAIL: PAU_ASSEMBLER administeredAgentFactory() mismatch" >&2
+        echo "  expected: $ADMINISTERED_AGENT_FACTORY" >&2
+        echo "  actual:   $actual_administered_agent_factory" >&2
+        return 1
+    fi
+    echo "pass: PAU_ASSEMBLER administeredAgentFactory() = $actual_administered_agent_factory"
+
+    actual_pau_factory="$(cast call --rpc-url "$RPC_URL" "$PAU_ASSEMBLER" 'pauFactory()(address)')"
+    if [[ "$(printf '%s' "$actual_pau_factory" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$PAU_FACTORY" | tr '[:upper:]' '[:lower:]')" ]]; then
+        echo "FAIL: PAU_ASSEMBLER pauFactory() mismatch" >&2
+        echo "  expected: $PAU_FACTORY" >&2
+        echo "  actual:   $actual_pau_factory" >&2
+        return 1
+    fi
+    echo "pass: PAU_ASSEMBLER pauFactory() = $actual_pau_factory"
+}
+
 # Registry-level constants from sky-pau-registry Ethereum.sol and verification.md.
 BEACON=0x829dC2b7E94B1954F0764E573f2E0d45Afa28199
 PAU_FACTORY=0x69A5d548830AC2A4Ba90A44a2C75BDA71f97fc66
+ADMINISTERED_AGENT_FACTORY=0x2968c3b5478cF93B70aB1e24255d4EDBBd27a089
+PAU_ASSEMBLER=0xc812aAD3FaE2D3511C664374B601a9BeBFeCCa2E
+ADMINISTERED_AGENT_FACTORY_RUNTIME_HASH=0x5ae519a20818627fb29bf44c613a3b6aea174ffe694803bafd1ad1ab8db0fe38
+PAU_ASSEMBLER_RUNTIME_HASH=0x971e7c1142c2cc19dacf76ab737b5667d84a11563fc7821b35fbd0c8193c4cfa
 DEPLOYER=0x1ca4ECaF0E13ca833c80dA835DEEa15e1684361d
 
 DAI=0x6B175474E89094C44Da98b954EedeAC495271d0F
@@ -657,46 +1031,52 @@ if [[ "$SKIP_REGISTRY_CONSTANTS" != "1" ]]; then
     echo
 fi
 
-ensure_diamond_pau_is_comparable
-DIAMOND_PAU_BUILD_ROOT="$(prepare_diamond_pau_workdir)"
-target_commit="$(git -C "$DIAMOND_PAU_BUILD_ROOT/lib/diamond-pau" rev-parse HEAD)"
+if should_prepare_diamond_pau; then
+    ensure_diamond_pau_is_comparable
+    DIAMOND_PAU_BUILD_ROOT="$(prepare_diamond_pau_workdir)"
+    target_commit="$(git -C "$DIAMOND_PAU_BUILD_ROOT/lib/diamond-pau" rev-parse HEAD)"
 
-echo "diamond-pau tag: $TAG ($target_commit)"
-echo "diamond-pau root: $DIAMOND_PAU_BUILD_ROOT"
-echo "block:           $VERIFY_BLOCK"
-echo
+    echo "diamond-pau tag: $TAG ($target_commit)"
+    echo "diamond-pau root: $DIAMOND_PAU_BUILD_ROOT"
+    echo "block:           $VERIFY_BLOCK"
+    echo
+else
+    echo "SKIP: diamond-pau registry bytecode entries because VERIFY_ONLY=$VERIFY_ONLY"
+    echo
+fi
 
-verify_one BEACON                 "$BEACON"                                      diamond-pau/Beacon.sol:Beacon "$DEPLOYER"
-verify_one PAU_FACTORY            "$PAU_FACTORY"                                 diamond-pau/PAUFactory.sol:PAUFactory "$BEACON"
-verify_one AAVE_FACET             0x8CE890A96a193ff2DD4B2eA3C682326F655f6b62      diamond-pau/facets/aave/AaveFacet.sol:AaveFacet
-verify_one BASIN_FACET            0xC84825BCD13AEddc372400239499380376a44A39      diamond-pau/facets/basin/BasinFacet.sol:BasinFacet
-verify_one CCTP_FACET             0xADf62692340e46EF90336f2e75ce3b37f1148873      diamond-pau/facets/cctp/CCTPFacet.sol:CCTPFacet "$CCTP_TOKEN_MESSENGER" "$USDC"
-verify_one CENTRIFUGE_FACET       0xa0A10BA97be1412730D694B8dE1afe7eff20eC31      diamond-pau/facets/centrifuge/CentrifugeFacet.sol:CentrifugeFacet
-verify_one CURVE_FACET            0x139D81d7d6040fAeF7cF0EF5A2636Ca8a97a30d8      diamond-pau/facets/curve/CurveFacet.sol:CurveFacet
-verify_one DAIUSDS_FACET          0x3817F734CAe6AD2BDb79F9ff23091F2AD478da5F      diamond-pau/facets/dai-usds/DAIUSDSFacet.sol:DAIUSDSFacet "$DAI" "$DAI_USDS" "$USDS"
-verify_one ERC4626_FACET          0x1dCA18608c89174181153E786778705b4A0E1a06      diamond-pau/facets/erc4626/ERC4626Facet.sol:ERC4626Facet
-verify_one ERC7540_FACET          0x4f7e0E3612b0e1E156A2B6570a51d4BD709F1315      diamond-pau/facets/erc7540/ERC7540Facet.sol:ERC7540Facet
-verify_one ETHENA_FACET           0xEc48D773CEef1c6b07CdA1afA2716C478b55187B      diamond-pau/facets/ethena/EthenaFacet.sol:EthenaFacet "$ETHENA_MINTER" "$SUSDE" "$USDC" "$USDE"
-verify_one FARM_FACET             0xF24E91f5D8529436c9fB92dd94F80d4A6C25d0f0      diamond-pau/facets/farm/FarmFacet.sol:FarmFacet
-verify_one LAYER_ZERO_FACET       0xA0c323a0acb20F259eA4ff343319D450BE6472e5      diamond-pau/facets/layer-zero/LayerZeroFacet.sol:LayerZeroFacet
-verify_one MAPLE_FACET            0x691b5c26aD2B74d2376f4eD87904E9D3E47bD630      diamond-pau/facets/maple/MapleFacet.sol:MapleFacet
-verify_one MERKL_FACET            0x321138Db5E056e9d0080D4c278e10A1EdC091Eb0      diamond-pau/facets/merkl/MerklFacet.sol:MerklFacet
-verify_one OTC_FACET              0x46b24ba00B65CB4f603447590e539b08097fb7Ac      diamond-pau/facets/otc/OTCFacet.sol:OTCFacet
-verify_one PENDLE_FACET           0xcC9dD4c9B2a9c08f2692e7060F43d29A03E87348      diamond-pau/facets/pendle/PendleFacet.sol:PendleFacet "$PENDLE_ROUTER"
-verify_one PSM_FACET              0xE4A5dAc768a310cc2316f258901b32E499653064      diamond-pau/facets/psm/PSMFacet.sol:PSMFacet "$DAI" "$DAI_USDS" "$PSM" "$USDC" "$USDS"
-verify_one SPARK_VAULT_FACET      0xff0d19920E207e3A17eb5A2E5bA3AFA44836362b      diamond-pau/facets/spark-vault/SparkVaultFacet.sol:SparkVaultFacet
-verify_one SUPERSTATE_FACET       0xeE197475607E9a27cCAA4786e740d2F0d0E706A7      diamond-pau/facets/superstate/SuperstateFacet.sol:SuperstateFacet "$USDC" "$USTB"
-verify_one TRANSFER_ASSET_FACET   0x4DA7608C331b8f135df5b985018933780eCd089D      diamond-pau/facets/transfer-asset/TransferAssetFacet.sol:TransferAssetFacet
-verify_one UNISWAP_V3_FACET       0x445D9Dc752F269Be48250f1A180CAC4c61cE4bab      diamond-pau/facets/uniswap-v3/UniswapV3Facet.sol:UniswapV3Facet "$UNISWAP_V3_POSITION_MANAGER" "$UNISWAP_V3_ROUTER"
-verify_one UNISWAP_V4_FACET       0x75D35ffB8e6B871E12EB549CcF6afD324c46E47D      diamond-pau/facets/uniswap-v4/UniswapV4Facet.sol:UniswapV4Facet "$PERMIT2" "$UNISWAP_V4_POSITION_MANAGER" "$UNISWAP_V4_ROUTER"
-verify_one USDS_FACET             0x1221CC4B85Ab260660aD21C2829e0EB516dffBc7      diamond-pau/facets/usds/USDSFacet.sol:USDSFacet "$USDS"
-verify_one WEETH_FACET            0x1d8D089EB7D558F5dc6aA0cf98DDe13B77b3F641      diamond-pau/facets/weeth/WEETHFacet.sol:WEETHFacet "$WEETH" "$WETH"
-verify_one WRAP_PROXY_ETH_FACET   0x081506DE21C695Af5e61a81aD288C8A96B6b59B9      diamond-pau/facets/wrap-proxy-eth/WrapProxyETHFacet.sol:WrapProxyETHFacet "$WETH"
-verify_one WSTETH_FACET           0x3a82D11Cd37Fb0098363262Dc69425d07Fa05516      diamond-pau/facets/wsteth/WSTETHFacet.sol:WSTETHFacet "$WETH" "$WSTETH_WITHDRAW_QUEUE" "$WSTETH"
+verify_one BEACON                 "$BEACON"                                      diamond-pau/Beacon.sol:Beacon                                0x6942fe0a7dfabe69099c5ac1078b5c3581b6bcb39b0a5fa6038117cb9ae38ec7 "$DEPLOYER"
+verify_one PAU_FACTORY            "$PAU_FACTORY"                                 diamond-pau/PAUFactory.sol:PAUFactory                        0x0c64c1999a9eab8c3d273bba1dd53a76e4bb74df4e7c39e9e872b9313e92ceec "$BEACON"
+verify_one AAVE_FACET             0x8CE890A96a193ff2DD4B2eA3C682326F655f6b62      diamond-pau/facets/aave/AaveFacet.sol:AaveFacet             0x3157486bb8dd60e7899fba569c2cd6a649b9da92898cd6eb3409d1a63c945881
+verify_one BASIN_FACET            0xC84825BCD13AEddc372400239499380376a44A39      diamond-pau/facets/basin/BasinFacet.sol:BasinFacet          0xaaa4e7d649c1876207f8fd07d5de9bacab19b096be07b4b15a55c4cef01f945d
+verify_one CCTP_FACET             0xADf62692340e46EF90336f2e75ce3b37f1148873      diamond-pau/facets/cctp/CCTPFacet.sol:CCTPFacet             0x71c6b48e1adb4dfe5c4eab8117ff7e71239bbad74f31261aa719c9f15fa68b8f "$CCTP_TOKEN_MESSENGER" "$USDC"
+verify_one CENTRIFUGE_FACET       0xa0A10BA97be1412730D694B8dE1afe7eff20eC31      diamond-pau/facets/centrifuge/CentrifugeFacet.sol:CentrifugeFacet 0x2e13cf572d0a5b74c97036ae09b6e288465234889d9f7b95232ef9e25c8cbf34
+verify_one CURVE_FACET            0x139D81d7d6040fAeF7cF0EF5A2636Ca8a97a30d8      diamond-pau/facets/curve/CurveFacet.sol:CurveFacet          0x25357da7ab4b033969777de0d76ca5ac3853dc9bcf4fb824941d1773fec4e3cd
+verify_one DAIUSDS_FACET          0x3817F734CAe6AD2BDb79F9ff23091F2AD478da5F      diamond-pau/facets/dai-usds/DAIUSDSFacet.sol:DAIUSDSFacet    0x9b9ce00d908f4d1c92f72da291b48db5a0cc52a4e90947ce873ed1830e667355 "$DAI" "$DAI_USDS" "$USDS"
+verify_one ERC4626_FACET          0x1dCA18608c89174181153E786778705b4A0E1a06      diamond-pau/facets/erc4626/ERC4626Facet.sol:ERC4626Facet    0xa3653b3e840684d7b5f3e02700280b1e2d6236587e39864f77c21cd903866916
+verify_one ERC7540_FACET          0x4f7e0E3612b0e1E156A2B6570a51d4BD709F1315      diamond-pau/facets/erc7540/ERC7540Facet.sol:ERC7540Facet    0x377959f0409af06ff8926611707f102c1403055f47dc0ec7d2271924f13cf035
+verify_one ETHENA_FACET           0xEc48D773CEef1c6b07CdA1afA2716C478b55187B      diamond-pau/facets/ethena/EthenaFacet.sol:EthenaFacet       0x87bbb809b29c98cb3fd929d2a747d84f2ccff9cbcc6f47104eb9a0223d4d14eb "$ETHENA_MINTER" "$SUSDE" "$USDC" "$USDE"
+verify_one FARM_FACET             0xF24E91f5D8529436c9fB92dd94F80d4A6C25d0f0      diamond-pau/facets/farm/FarmFacet.sol:FarmFacet             0x07ec20c8f1ca3487709e0300978ef46e3f45888c456c1f888bf9094e31d67894
+verify_one LAYER_ZERO_FACET       0xA0c323a0acb20F259eA4ff343319D450BE6472e5      diamond-pau/facets/layer-zero/LayerZeroFacet.sol:LayerZeroFacet 0xa85e4a26ce588166912e32a7469c5495827d905777234a2d32cf255ffdc16cc2
+verify_one MAPLE_FACET            0x691b5c26aD2B74d2376f4eD87904E9D3E47bD630      diamond-pau/facets/maple/MapleFacet.sol:MapleFacet          0x72071252b13d99aaac40d45177f3072a9a5a92c07bffcb3e838b8cddcf3c6b6a
+verify_one MERKL_FACET            0x321138Db5E056e9d0080D4c278e10A1EdC091Eb0      diamond-pau/facets/merkl/MerklFacet.sol:MerklFacet          0xe8b533e3c99738bf0f9523ada447c76a3d77f51cdc2ecb82668fb2e328ecad68
+verify_one OTC_FACET              0x46b24ba00B65CB4f603447590e539b08097fb7Ac      diamond-pau/facets/otc/OTCFacet.sol:OTCFacet                0x16d7cb7384f11f5a96e1266296287ad1b8d9d34b143378aea2665ccd537679aa
+verify_one PENDLE_FACET           0xcC9dD4c9B2a9c08f2692e7060F43d29A03E87348      diamond-pau/facets/pendle/PendleFacet.sol:PendleFacet       0xe8805f0090daad6fe385fb1e88054c565beafe0c7be096030ce10390e67e101a "$PENDLE_ROUTER"
+verify_one PSM_FACET              0xE4A5dAc768a310cc2316f258901b32E499653064      diamond-pau/facets/psm/PSMFacet.sol:PSMFacet                0xb17165681e669b85828cf26152ce8ebc5c0d487e91f4531cf93adf662a37e941 "$DAI" "$DAI_USDS" "$PSM" "$USDC" "$USDS"
+verify_one SPARK_VAULT_FACET      0xff0d19920E207e3A17eb5A2E5bA3AFA44836362b      diamond-pau/facets/spark-vault/SparkVaultFacet.sol:SparkVaultFacet 0xa155a82c1ad0f2697010e691f981c2c94d75565353ddc7a61df60ea2ae3cf155
+verify_one SUPERSTATE_FACET       0xeE197475607E9a27cCAA4786e740d2F0d0E706A7      diamond-pau/facets/superstate/SuperstateFacet.sol:SuperstateFacet 0xbda7b457c2dca190ebf152eebf4572cb8d98ff26d3ca6025d15e444a7532c070 "$USDC" "$USTB"
+verify_one TRANSFER_ASSET_FACET   0x4DA7608C331b8f135df5b985018933780eCd089D      diamond-pau/facets/transfer-asset/TransferAssetFacet.sol:TransferAssetFacet 0xc09a16c2a7b120f19b65d2ad94bc6481fc0f1720ae9407393c0f38ddd23cb2c8
+verify_one UNISWAP_V3_FACET       0x445D9Dc752F269Be48250f1A180CAC4c61cE4bab      diamond-pau/facets/uniswap-v3/UniswapV3Facet.sol:UniswapV3Facet 0x225d028286a5090b27a9590c63b80d486a6c6da3a6a6762932abae8d9bff9233 "$UNISWAP_V3_POSITION_MANAGER" "$UNISWAP_V3_ROUTER"
+verify_one UNISWAP_V4_FACET       0x75D35ffB8e6B871E12EB549CcF6afD324c46E47D      diamond-pau/facets/uniswap-v4/UniswapV4Facet.sol:UniswapV4Facet 0x0789f012604a887e711bcbb4e86e73890e67960a6a90c553cad1ef501bed76e0 "$PERMIT2" "$UNISWAP_V4_POSITION_MANAGER" "$UNISWAP_V4_ROUTER"
+verify_one USDS_FACET             0x1221CC4B85Ab260660aD21C2829e0EB516dffBc7      diamond-pau/facets/usds/USDSFacet.sol:USDSFacet             0x60a29823fd0c123add0ab8b7abfa75f6c9d1a4d18acaf5b7e3414634a022e685 "$USDS"
+verify_one WEETH_FACET            0x1d8D089EB7D558F5dc6aA0cf98DDe13B77b3F641      diamond-pau/facets/weeth/WEETHFacet.sol:WEETHFacet          0xc82d8941bc0da453d2a50d54f92541ad2b0fe876136305d79026abb89866b516 "$WEETH" "$WETH"
+verify_one WRAP_PROXY_ETH_FACET   0x081506DE21C695Af5e61a81aD288C8A96B6b59B9      diamond-pau/facets/wrap-proxy-eth/WrapProxyETHFacet.sol:WrapProxyETHFacet 0x3a82a316722d3146ea8f1cc1fbd965b48bac1cf062850762e197e5b7dbeae57f "$WETH"
+verify_one WSTETH_FACET           0x3a82D11Cd37Fb0098363262Dc69425d07Fa05516      diamond-pau/facets/wsteth/WSTETHFacet.sol:WSTETHFacet       0x2464ee33b04c9d7d84e755521f02c12ae378f951b55707ece27f31f0f39b7e45 "$WETH" "$WSTETH_WITHDRAW_QUEUE" "$WSTETH"
 verify_administered_agent_factory
+verify_pau_assembler
 
 echo
-echo "PASS: selected Sky PAU registry bytecode entries fully match"
+echo "PASS: selected Sky PAU registry and PAU assembler bytecode entries fully match"
 SKY_PAU_BYTECODE_SH
 
 cat > "$VERIFY_DIR/verification_scripts/verify-sky-pau-registry-bytecode-matrix.sh" <<'SKY_PAU_MATRIX_SH'
@@ -1155,6 +1535,8 @@ DIAMOND_PAU_RELEASE_DIR="$VERIFY_DIR/diamond-pau-v1.13.0" \
 DIAMOND_PAU_WORKDIR="$VERIFY_DIR/diamond-pau-parent-v1.13.0" \
 AA_RELEASE_DIR="$VERIFY_DIR/pau-administered-agent-v1.0.0" \
 AA_WORKDIR="$VERIFY_DIR/pau-aa-parent" \
+PAU_ASSEMBLERS_RELEASE_DIR="$VERIFY_DIR/pau-assemblers-v1.0.0" \
+PAU_ASSEMBLERS_WORKDIR="$VERIFY_DIR/pau-assemblers-bytecode-v1.0.0" \
 SKIP_REGISTRY_CONSTANTS=1 \
   bash "$VERIFY_DIR/verification_scripts/verify-sky-pau-registry-bytecode.sh" v1.13.0
 
@@ -1165,6 +1547,8 @@ DIAMOND_PAU_RELEASE_DIR="$VERIFY_DIR/diamond-pau-v1.13.0" \
 DIAMOND_PAU_WORKDIR="$VERIFY_DIR/diamond-pau-parent-v1.13.0" \
 AA_RELEASE_DIR="$VERIFY_DIR/pau-administered-agent-v1.0.0" \
 AA_WORKDIR="$VERIFY_DIR/pau-aa-parent" \
+PAU_ASSEMBLERS_RELEASE_DIR="$VERIFY_DIR/pau-assemblers-v1.0.0" \
+PAU_ASSEMBLERS_WORKDIR="$VERIFY_DIR/pau-assemblers-bytecode-v1.0.0" \
 SKIP_REGISTRY_CONSTANTS=1 \
   bash "$VERIFY_DIR/verification_scripts/verify-sky-pau-registry-bytecode-matrix.sh" v1.13.0 v1.1.0
 
@@ -1176,9 +1560,9 @@ Expected terminal results:
 
 | Command | Expected result |
 |---|---|
-| `verify-sky-pau-registry-constants.sh` | `PASS: 28 Sky PAU registry constants match verified addresses` |
-| `verify-sky-pau-registry-bytecode.sh v1.13.0` | all checked entries print creation `full` and runtime `full` |
-| `verify-sky-pau-registry-bytecode-matrix.sh v1.13.0 v1.1.0` | v1.13.0 verified; old-layout v1.1.0 reported `NOT_COMPARABLE` |
+| `verify-sky-pau-registry-constants.sh` | `PASS: 28 Sky PAU registry constants and PAU_ASSEMBLER match verified addresses` |
+| `verify-sky-pau-registry-bytecode.sh v1.13.0` | all checked registry entries and `PAU_ASSEMBLER` print creation `full` and runtime `full` |
+| `verify-sky-pau-registry-bytecode-matrix.sh v1.13.0 v1.1.0` | v1.13.0 plus `PAU_ASSEMBLER` verified; old-layout v1.1.0 reported `NOT_COMPARABLE` |
 | `verify-sky-pau-registry-wiring.sh` | `PASS: Sky PAU registry wiring checks matched` |
 
 ## Wiring Verification
@@ -1281,6 +1665,7 @@ Expected terminal results:
 | `WRAP_PROXY_ETH_FACET` | `0x081506DE21C695Af5e61a81aD288C8A96B6b59B9` | [diamond-pau v1.13.0](https://github.com/sky-ecosystem/diamond-pau/releases/tag/v1.13.0) | [WrapProxyETHFacet](https://github.com/sky-ecosystem/diamond-pau/blob/5c5ad6ae174bf467081ca82342ced2bd42a5c732/src/facets/wrap-proxy-eth/WrapProxyETHFacet.sol) | `0x3a82a316722d3146ea8f1cc1fbd965b48bac1cf062850762e197e5b7dbeae57f` | yes |
 | `WSTETH_FACET` | `0x3a82D11Cd37Fb0098363262Dc69425d07Fa05516` | [diamond-pau v1.13.0](https://github.com/sky-ecosystem/diamond-pau/releases/tag/v1.13.0) | [WSTETHFacet](https://github.com/sky-ecosystem/diamond-pau/blob/5c5ad6ae174bf467081ca82342ced2bd42a5c732/src/facets/wsteth/WSTETHFacet.sol) | `0x2464ee33b04c9d7d84e755521f02c12ae378f951b55707ece27f31f0f39b7e45` | yes |
 | `ADMINISTERED_AGENT_FACTORY` | `0x2968c3b5478cF93B70aB1e24255d4EDBBd27a089` | [pau-administered-agent v1.0.0](https://github.com/sky-ecosystem/pau-administered-agent/releases/tag/v1.0.0) | [AdministeredAgentFactory](https://github.com/sky-ecosystem/pau-administered-agent/blob/bfaaf709a8664d74d12604455f0365a0a12439cf/src/AdministeredAgentFactory.sol) | `0x5ae519a20818627fb29bf44c613a3b6aea174ffe694803bafd1ad1ab8db0fe38` | yes |
+| `PAU_ASSEMBLER` | `0xc812aAD3FaE2D3511C664374B601a9BeBFeCCa2E` | [pau-assemblers v1.0.0](https://github.com/sky-ecosystem/pau-assemblers/releases/tag/v1.0.0) | [DefaultPAUAssembler](https://github.com/sky-ecosystem/pau-assemblers/blob/d7d6f084604d4f7e45879a3b15d03ee870231467/src/DefaultPAUAssembler.sol) | `0x971e7c1142c2cc19dacf76ab737b5667d84a11563fc7821b35fbd0c8193c4cfa` | yes |
 
 ## Constructor Args Used
 
@@ -1300,11 +1685,13 @@ Expected terminal results:
 | `WEETH_FACET` | [WEETHFacet](https://github.com/sky-ecosystem/diamond-pau/blob/5c5ad6ae174bf467081ca82342ced2bd42a5c732/src/facets/weeth/WEETHFacet.sol) | `0xCd5fE23C85820F7B72D0926FC9b05b43E359b7ee`<br>`0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` |
 | `WRAP_PROXY_ETH_FACET` | [WrapProxyETHFacet](https://github.com/sky-ecosystem/diamond-pau/blob/5c5ad6ae174bf467081ca82342ced2bd42a5c732/src/facets/wrap-proxy-eth/WrapProxyETHFacet.sol) | `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` |
 | `WSTETH_FACET` | [WSTETHFacet](https://github.com/sky-ecosystem/diamond-pau/blob/5c5ad6ae174bf467081ca82342ced2bd42a5c732/src/facets/wsteth/WSTETHFacet.sol) | `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2`<br>`0x889edC2eDab5f40e902b864aD4d7AdE8E412F9B1`<br>`0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0` |
+| `PAU_ASSEMBLER` | [DefaultPAUAssembler](https://github.com/sky-ecosystem/pau-assemblers/blob/d7d6f084604d4f7e45879a3b15d03ee870231467/src/DefaultPAUAssembler.sol) | `0x2968c3b5478cF93B70aB1e24255d4EDBBd27a089`<br>`0x69A5d548830AC2A4Ba90A44a2C75BDA71f97fc66` |
 
 ## GitHub References
 
 - Registry source: [sky-ecosystem/sky-pau-registry `src/Ethereum.sol` @ `161bac0c17a7d2c4d4e0455e1febe401a7a36edb`](https://github.com/sky-ecosystem/sky-pau-registry/blob/161bac0c17a7d2c4d4e0455e1febe401a7a36edb/src/Ethereum.sol)
 - Diamond source release: [sky-ecosystem/diamond-pau v1.13.0](https://github.com/sky-ecosystem/diamond-pau/releases/tag/v1.13.0)
 - Administered-agent source release: [sky-ecosystem/pau-administered-agent v1.0.0](https://github.com/sky-ecosystem/pau-administered-agent/releases/tag/v1.0.0)
+- PAU assembler source release: [sky-ecosystem/pau-assemblers v1.0.0](https://github.com/sky-ecosystem/pau-assemblers/releases/tag/v1.0.0)
 - Sky chainlog source: [sky-ecosystem/chainlog-ui `api/mainnet/active.json` @ `d0cbbe08fbc591991fd92197b1e7698311e82c26`](https://github.com/sky-ecosystem/chainlog-ui/blob/d0cbbe08fbc591991fd92197b1e7698311e82c26/api/mainnet/active.json)
 
